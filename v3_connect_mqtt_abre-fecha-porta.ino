@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <DHT.h>
 
@@ -7,102 +8,165 @@
 #define DHT_TYPE DHT11     // Define o tipo do sensor
 DHT dht(DHT_PIN, DHT_TYPE);
 
+// Configurações do sensor ultrassônico HC-SR04
+#define TRIG_PIN 5  // GPIO do pino TRIG
+#define ECHO_PIN 18 // GPIO do pino ECHO
+
+// Configuração do LED indicador
+#define LED_PIN 2 // GPIO do pino do LED
+
 // Configurações da rede Wi-Fi
-const char* ssid = "CIT_Alunos";          // Nome da rede Wi-Fi
-const char* password = "alunos@2024";     // Senha da rede Wi-Fi
+const char* ssid = "Starlink_CIT";
+const char* password = "Ufrr@2024Cit";
 
 // Configurações do HiveMQ (broker MQTT)
 const char* mqtt_server = "cd8839ea5ec5423da3aaa6691e5183a5.s1.eu.hivemq.cloud";
-const int mqtt_port = 1883;
-const char* mqtt_topic = "esp32/dht11/temperatura";
+const int mqtt_port = 8883;
+const char* mqtt_topic_temp = "esp32/dht11/temperatura";
+const char* mqtt_topic_porta = "esp32/refrigerador/status";
+const char* mqtt_username = "hivemq.webclient.1734636778463";
+const char* mqtt_password = "EU<pO3F7x?S%wLk4#5ib";
 
-// Inicialização do cliente Wi-Fi e MQTT
-WiFiClient espClient;
+// Inicialização do cliente Wi-Fi e MQTT com TLS
+WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
 // Variáveis auxiliares
-unsigned long lastMsg = 0;  // Timestamp da última mensagem enviada
-const int intervalo = 5000; // Intervalo de envio (em milissegundos)
+unsigned long lastMsg = 0;
+const int intervalo = 5000;
+const float distancia_limite = 10.0; // Distância limite em cm para a porta
+unsigned long portaAbertaDesde = 0;  // Momento em que a porta foi detectada aberta
+bool ledEstado = false;              // Estado atual do LED
 
 void setup() {
   Serial.begin(115200);
-  setup_wifi();        // Conecta-se à rede Wi-Fi
-  client.setServer(mqtt_server, mqtt_port); // Configura o broker MQTT
-  dht.begin();         // Inicializa o sensor DHT11
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT); // Configura o LED como saída
+
+  // Conecta à rede Wi-Fi
+  setup_wifi();
+
+  // Configura o cliente MQTT
+  espClient.setInsecure(); // Permite conexões TLS sem validar certificados
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback); // Adiciona callback para mensagens recebidas
+  
+  dht.begin();
 }
 
 void loop() {
   if (!client.connected()) {
-    reconnect(); // Reconecta ao broker MQTT, caso desconectado
+    reconnect();
   }
-  client.loop(); // Mantém a conexão MQTT ativa
+  client.loop();
 
-  // Envia a temperatura a cada "intervalo" definido
+  // Envia dados a cada intervalo definido
   unsigned long now = millis();
   if (now - lastMsg > intervalo) {
     lastMsg = now;
 
-    // Lê temperatura e umidade
-    float temperatura = dht.readTemperature();
-    float umidade = dht.readHumidity();
+    // Envia dados do DHT11
+    enviarTemperatura();
 
-    // Verifica se a leitura foi bem-sucedida
-    if (isnan(temperatura) || isnan(umidade)) {
-      Serial.println("Erro ao ler o sensor DHT11!");
-      return;
-    }
-
-    // Exibe os valores lidos
-    Serial.print("Temperatura: ");
-    Serial.print(temperatura);
-    Serial.println("°C");
-
-    Serial.print("Umidade: ");
-    Serial.print(umidade);
-    Serial.println("%");
-
-    // Monta a mensagem para o HiveMQ
-    String mensagem = "Temperatura: " + String(temperatura) + "°C, Umidade: " + String(umidade) + "%";
-
-    // Envia ao HiveMQ
-    if (client.publish(mqtt_topic, mensagem.c_str())) {
-      Serial.println("Mensagem enviada ao HiveMQ com sucesso!");
-    } else {
-      Serial.println("Falha ao enviar a mensagem ao HiveMQ.");
-    }
+    // Envia dados do HC-SR04
+    verificarPorta();
   }
+
+  // Atualiza o estado do LED
+  gerenciarLED(now);
 }
 
-// Conecta-se à rede Wi-Fi
+// Função para conectar ao Wi-Fi
 void setup_wifi() {
   delay(10);
   Serial.println("Conectando à rede Wi-Fi...");
-  Serial.println(ssid);
-
-  WiFi.begin(ssid, password); // Inicia a conexão
-
+  WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-
-  Serial.println("");
-  Serial.println("Wi-Fi conectado!");
+  Serial.println("\nWi-Fi conectado!");
   Serial.println("Endereço IP: ");
   Serial.println(WiFi.localIP());
 }
 
-// Reconecta ao HiveMQ caso a conexão MQTT seja perdida
+// Função para reconectar ao MQTT
 void reconnect() {
   while (!client.connected()) {
     Serial.println("Tentando reconectar ao HiveMQ...");
-    if (client.connect("ESP32_Client")) {
+    if (client.connect("ESP32_Client", mqtt_username, mqtt_password)) {
       Serial.println("Conectado ao HiveMQ!");
+      client.subscribe(mqtt_topic_temp); // Exemplo de assinatura de tópico
     } else {
       Serial.print("Falha, rc=");
       Serial.print(client.state());
-      Serial.println(" Tentando novamente em 5 segundos...");
+      Serial.println(". Tentando novamente em 5 segundos...");
       delay(5000);
     }
   }
+}
+
+// Callback para processar mensagens recebidas
+void callback(char* topic, byte* message, unsigned int length) {
+  Serial.print("Mensagem recebida em [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)message[i]);
+  }
+  Serial.println();
+}
+
+// Função para enviar dados de temperatura e umidade
+void enviarTemperatura() {
+  float temperatura = dht.readTemperature();
+  float umidade = dht.readHumidity();
+
+  if (!isnan(temperatura) && !isnan(umidade)) {
+    String mensagem = "Temperatura: " + String(temperatura) + " °C, Umidade: " + String(umidade) + " %";
+    if (client.publish(mqtt_topic_temp, mensagem.c_str())) {
+      Serial.println("Temperatura enviada!");
+    } else {
+      Serial.println("Falha ao enviar temperatura.");
+    }
+  } else {
+    Serial.println("Erro ao ler o sensor DHT11.");
+  }
+}
+
+// Verifica o estado da porta e atualiza o tempo de abertura
+void verificarPorta() {
+  float distancia = medirDistancia();
+  if (distancia > distancia_limite) {
+    if (portaAbertaDesde == 0) {
+      portaAbertaDesde = millis(); // Marca o momento em que a porta foi detectada aberta
+    }
+  } else {
+    portaAbertaDesde = 0; // Reseta o tempo quando a porta é fechada
+    digitalWrite(LED_PIN, LOW); // Garante que o LED está apagado
+  }
+}
+
+// Função para gerenciar o estado do LED
+void gerenciarLED(unsigned long now) {
+  if (portaAbertaDesde > 0 && now - portaAbertaDesde > 10000) {
+    // Pisca o LED se a porta estiver aberta por mais de 10 segundos
+    if (now % 1000 < 500) {
+      digitalWrite(LED_PIN, HIGH);
+    } else {
+      digitalWrite(LED_PIN, LOW);
+    }
+  }
+}
+
+// Função para medir distância com HC-SR04
+float medirDistancia() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duracao = pulseIn(ECHO_PIN, HIGH);
+  return (duracao * 0.034) / 2.0;
 }
