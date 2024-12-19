@@ -51,6 +51,15 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -10800; // Fuso horário (GMT-3 para o Brasil)
 const int daylightOffset_sec = 3600; // Ajuste para horário de verão
 
+void callback(char* topic, byte* payload, unsigned int length) {
+  // Aqui você implementa a lógica para processar as mensagens recebidas
+  Serial.print("Mensagem recebida: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(TRIG_PIN, OUTPUT);
