@@ -22,8 +22,7 @@ const char* password = "Ufrr@2024Cit";
 // Configurações do HiveMQ (broker MQTT)
 const char* mqtt_server = "cd8839ea5ec5423da3aaa6691e5183a5.s1.eu.hivemq.cloud";
 const int mqtt_port = 8883;
-const char* mqtt_topic_temp = "esp32/dht11/temperatura";
-const char* mqtt_topic_porta = "esp32/refrigerador/status";
+const char* mqtt_topic = "esp32/refrigerator";
 const char* mqtt_username = "hivemq.webclient.1734636778463";
 const char* mqtt_password = "EU<pO3F7x?S%wLk4#5ib";
 
@@ -66,15 +65,12 @@ void loop() {
   if (now - lastMsg > intervalo) {
     lastMsg = now;
 
-    // Envia dados do DHT11
-    enviarTemperatura();
-
-    // Envia dados do HC-SR04
-    verificarPorta();
+    // Envia dados do sensor
+    enviarDados();
   }
 
   // Atualiza o estado do LED
-  gerenciarLED(now);
+  gerenciarLED();
 }
 
 // Função para conectar ao Wi-Fi
@@ -97,7 +93,6 @@ void reconnect() {
     Serial.println("Tentando reconectar ao HiveMQ...");
     if (client.connect("ESP32_Client", mqtt_username, mqtt_password)) {
       Serial.println("Conectado ao HiveMQ!");
-      client.subscribe(mqtt_topic_temp); // Exemplo de assinatura de tópico
     } else {
       Serial.print("Falha, rc=");
       Serial.print(client.state());
@@ -118,45 +113,52 @@ void callback(char* topic, byte* message, unsigned int length) {
   Serial.println();
 }
 
-// Função para enviar dados de temperatura e umidade
-void enviarTemperatura() {
+// Função para enviar dados de temperatura, umidade e estado da porta
+void enviarDados() {
+  // Leitura do DHT11
   float temperatura = dht.readTemperature();
   float umidade = dht.readHumidity();
 
-  if (!isnan(temperatura) && !isnan(umidade)) {
-    String mensagem = "Temperatura: " + String(temperatura) + " °C, Umidade: " + String(umidade) + " %";
-    if (client.publish(mqtt_topic_temp, mensagem.c_str())) {
-      Serial.println("Temperatura enviada!");
-    } else {
-      Serial.println("Falha ao enviar temperatura.");
-    }
-  } else {
+  // Verifica leituras válidas
+  if (isnan(temperatura) || isnan(umidade)) {
     Serial.println("Erro ao ler o sensor DHT11.");
+    return;
   }
-}
 
-// Verifica o estado da porta e atualiza o tempo de abertura
-void verificarPorta() {
+  // Verifica o estado da porta
   float distancia = medirDistancia();
-  if (distancia > distancia_limite) {
+  String estado_porta = (distancia <= distancia_limite) ? "Fechada" : "Aberta";
+
+  if (estado_porta == "Aberta") {
     if (portaAbertaDesde == 0) {
-      portaAbertaDesde = millis(); // Marca o momento em que a porta foi detectada aberta
+      portaAbertaDesde = millis();
     }
   } else {
-    portaAbertaDesde = 0; // Reseta o tempo quando a porta é fechada
-    digitalWrite(LED_PIN, LOW); // Garante que o LED está apagado
+    portaAbertaDesde = 0;
+    digitalWrite(LED_PIN, LOW); // Desliga o LED quando a porta é fechada
+  }
+
+  // Monta a mensagem JSON
+  String mensagem = "{";
+  mensagem += "\"temperatura\": " + String(temperatura) + ", ";
+  mensagem += "\"umidade\": " + String(umidade) + ", ";
+  mensagem += "\"estado_porta\": \"" + estado_porta + "\"}";
+
+  // Envia ao HiveMQ
+  if (client.publish(mqtt_topic, mensagem.c_str())) {
+    Serial.println("Dados enviados: " + mensagem);
+  } else {
+    Serial.println("Falha ao enviar dados.");
   }
 }
 
 // Função para gerenciar o estado do LED
-void gerenciarLED(unsigned long now) {
-  if (portaAbertaDesde > 0 && now - portaAbertaDesde > 10000) {
+void gerenciarLED() {
+  if (portaAbertaDesde > 0 && millis() - portaAbertaDesde > 10000) {
     // Pisca o LED se a porta estiver aberta por mais de 10 segundos
-    if (now % 1000 < 500) {
-      digitalWrite(LED_PIN, HIGH);
-    } else {
-      digitalWrite(LED_PIN, LOW);
-    }
+    ledEstado = !ledEstado;
+    digitalWrite(LED_PIN, ledEstado ? HIGH : LOW);
+    delay(500); // Tempo de piscada
   }
 }
 
