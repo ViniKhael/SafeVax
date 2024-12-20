@@ -3,24 +3,24 @@
 #include <PubSubClient.h>
 #include <DHT.h>
 #include <SPI.h>
-#include <time.h> // Biblioteca para manipulação de tempo
+#include <time.h>
 #include <Adafruit_PN532.h>
 
 // Configurações do sensor DHT11
-#define DHT_PIN 4          // GPIO onde o sensor DHT11 está conectado
-#define DHT_TYPE DHT11     // Define o tipo do sensor
+#define DHT_PIN 4
+#define DHT_TYPE DHT11
 DHT dht(DHT_PIN, DHT_TYPE);
 
 // Configurações do sensor ultrassônico HC-SR04
-#define TRIG_PIN 5  // GPIO do pino TRIG
-#define ECHO_PIN 25 // GPIO do pino ECHO
+#define TRIG_PIN 5
+#define ECHO_PIN 25
 
 // Configuração do LED indicador
-#define LED_PIN 2 // GPIO do pino do LED
+#define LED_PIN 2
 
 // Configuração do módulo PN532
-#define SDA_PIN 21 // Pino SDA (SS) do módulo PN532
-#define SCL_PIN 22 // Pino SCL do módulo PN532
+#define SDA_PIN 21
+#define SCL_PIN 22
 Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
 
 // Configurações da rede Wi-Fi
@@ -38,70 +38,34 @@ const char* mqtt_password = "EU<pO3F7x?S%wLk4#5ib";
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
-// Variáveis auxiliares
+// Variáveis globais
 unsigned long lastMsg = 0;
-const int intervalo = 1000; // Envio de dados a cada 1 segundo
-const float distancia_limite = 10.0; // Distância limite em cm para a porta
-unsigned long portaAbertaDesde = 0;  // Momento em que a porta foi detectada aberta
-bool ledEstado = false;              // Estado atual do LED
-String usuarioAtual = "desconhecido"; // Usuário atual identificado pelo RFID
-
-// Configuração do servidor NTP
-const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = -10800; // Fuso horário (GMT-3 para o Brasil)
-const int daylightOffset_sec = 3600; // Ajuste para horário de verão
-
-// Temporizadores adicionais
-unsigned long ultimaLeituraDHT = 0;
-const int intervaloDHT = 3000; // Atualizar o DHT11 a cada 3 segundos
-
-unsigned long ultimaLeituraRFID = 0;
-const int intervaloRFID = 1000; // Verificar RFID a cada 1 segundo
-
-unsigned long ultimaMudancaLED = 0;
-const int intervaloPiscaLED = 500; // Intervalo para piscar o LED em milissegundos
-
-bool nfcFuncionando = false; // Variável para indicar se o módulo NFC está funcional
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Mensagem recebida: ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-}
+const int intervalo = 1000; // Intervalo de 1 segundo
+const float distancia_limite = 10.0;
+String usuarioAtual = "desconhecido"; // Persistência do usuário
 
 void setup() {
   Serial.begin(115200);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(LED_PIN, OUTPUT); // Configura o LED como saída
+  pinMode(LED_PIN, OUTPUT);
 
-  // Inicializa o PN532
-  Serial.println("Inicializando o módulo PN532...");
+  Serial.println("Inicializando PN532...");
   nfc.begin();
   uint32_t versiondata = nfc.getFirmwareVersion();
-  if (!versiondata) {
-    Serial.println("Aviso: Não foi possível encontrar o módulo PN532. Continuando sem o módulo NFC.");
-    nfcFuncionando = false; // Marca o NFC como não funcional
+  if (versiondata) {
+    nfc.SAMConfig();
+    Serial.println("PN532 inicializado.");
   } else {
-    nfcFuncionando = true; // Marca o NFC como funcional
-    nfc.SAMConfig(); // Configura o módulo para leitura de cartões
-    Serial.println("Módulo PN532 inicializado com sucesso!");
+    Serial.println("Módulo PN532 não detectado.");
   }
 
-  // Conecta à rede Wi-Fi
   setup_wifi();
-
-  // Configura o cliente MQTT
-  espClient.setInsecure(); // Permite conexões TLS sem validar certificados
+  espClient.setInsecure();
   client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback); // Adiciona callback para mensagens recebidas
+  client.setCallback(callback);
 
   dht.begin();
-
-  // Configura o servidor NTP
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
 void loop() {
@@ -110,36 +74,21 @@ void loop() {
   }
   client.loop();
 
-  // Envia dados a cada intervalo definido
-  unsigned long now = millis();
-  if (now - lastMsg > intervalo) {
-    lastMsg = now;
-    enviarDados();
-  }
-
-  // Atualiza o estado do LED
-  gerenciarLED();
-
-  // Verifica leitura do RFID
+  // Atualiza continuamente o estado do RFID
   verificarRFID();
-}
 
-// Função para obter timestamp atual
-String getTimestamp() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Falha ao obter o horário do servidor NTP");
-    return "Erro";
+  // Envia os dados MQTT a cada 1 segundo
+  unsigned long now = millis();
+  if (now - lastMsg >= intervalo) {
+    lastMsg = now;
+    enviarDados(); // Envia os dados com o estado mais recente
   }
-  char buffer[20];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-  return String(buffer);
 }
 
-// Função para conectar ao Wi-Fi
+// Conexão Wi-Fi
 void setup_wifi() {
   delay(10);
-  Serial.println("Conectando à rede Wi-Fi...");
+  Serial.println("Conectando ao Wi-Fi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -150,103 +99,63 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 }
 
-// Função para reconectar ao MQTT
+// Reconexão ao MQTT
 void reconnect() {
   while (!client.connected()) {
-    Serial.println("Tentando reconectar ao HiveMQ...");
+    Serial.println("Reconectando ao HiveMQ...");
     if (client.connect("ESP32_Client", mqtt_username, mqtt_password)) {
       Serial.println("Conectado ao HiveMQ!");
     } else {
-      Serial.print("Falha, rc=");
-      Serial.print(client.state());
-      Serial.println(". Tentando novamente em 5 segundos...");
       delay(5000);
     }
   }
 }
 
-// Função para enviar dados de temperatura, umidade, estado da porta e usuário
+// Envia dados ao servidor MQTT
 void enviarDados() {
-  float temperatura = NAN, umidade = NAN;
-
-  // Leitura condicional do DHT11
-  if (millis() - ultimaLeituraDHT > intervaloDHT) {
-    ultimaLeituraDHT = millis();
-    temperatura = dht.readTemperature();
-    umidade = dht.readHumidity();
-
-    if (isnan(temperatura) || isnan(umidade)) {
-      Serial.println("Erro ao ler o sensor DHT11.");
-      return;
-    }
-  }
-
-  // Leitura do HC-SR04
+  // Leitura dos sensores
+  float temperatura = dht.readTemperature();
+  float umidade = dht.readHumidity();
   float distancia = medirDistancia();
   String estado_porta = (distancia <= distancia_limite) ? "Fechada" : "Aberta";
 
-  if (estado_porta == "Aberta" && portaAbertaDesde == 0) {
-    portaAbertaDesde = millis();
-  } else if (estado_porta == "Fechada") {
-    portaAbertaDesde = 0;
-    digitalWrite(LED_PIN, LOW);
-  }
-
-  // Obter timestamp
-  String timestamp = getTimestamp();
-
-  // Montar mensagem JSON
+  // Monta a mensagem JSON
   String mensagem = "{";
-  mensagem += "\"horario:\": \"" + timestamp + "\", ";
   mensagem += "\"temperatura\": " + String(temperatura) + ", ";
   mensagem += "\"umidade\": " + String(umidade) + ", ";
   mensagem += "\"estado_porta\": \"" + estado_porta + "\", ";
   mensagem += "\"usuario\": \"" + usuarioAtual + "\"}";
 
-  // Publicar mensagem
+  // Envia ao HiveMQ
   if (client.publish(mqtt_topic, mensagem.c_str())) {
     Serial.println("Dados enviados: " + mensagem);
   } else {
-    Serial.println("Falha ao enviar dados.");
+    Serial.println("Falha no envio.");
   }
 }
 
-// Função para gerenciar o estado do LED
-void gerenciarLED() {
-  if (portaAbertaDesde > 0 && millis() - portaAbertaDesde > 10000) {
-    if (millis() - ultimaMudancaLED > intervaloPiscaLED) {
-      ultimaMudancaLED = millis();
-      ledEstado = !ledEstado;
-      digitalWrite(LED_PIN, ledEstado ? HIGH : LOW);
-    }
-  }
-}
-
-// Função para verificar o RFID
+// Função que verifica o cartão RFID de forma não bloqueante
 void verificarRFID() {
-  if (!nfcFuncionando || millis() - ultimaLeituraRFID < intervaloRFID) {
-    return;
-  }
-  ultimaLeituraRFID = millis();
+  uint8_t success = nfc.inListPassiveTarget();
 
-  uint8_t success;
-  uint8_t uid[7] = {0}; // UID do cartão
-  uint8_t uidLength;
+  if (success > 0) {
+    uint8_t uid[7];
+    uint8_t uidLength;
+    if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) {
+      String novoUsuario = "";
+      for (uint8_t i = 0; i < uidLength; i++) {
+        novoUsuario += String(uid[i], HEX);
+      }
 
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-  if (success) {
-    String id = "";
-    for (uint8_t i = 0; i < uidLength; i++) {
-      id += String(uid[i], HEX);
+      if (novoUsuario != usuarioAtual) {
+        usuarioAtual = novoUsuario; // Atualiza o usuário apenas se for diferente
+        Serial.println("Novo usuário identificado: " + usuarioAtual);
+      }
     }
-    usuarioAtual = id;
-    Serial.println("Cartão detectado. UID: " + id);
-  } else {
-    usuarioAtual = "desconhecido";
   }
 }
 
-// Função para medir distância com HC-SR04
+// Mede a distância com o sensor ultrassônico
 float medirDistancia() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -255,4 +164,13 @@ float medirDistancia() {
   digitalWrite(TRIG_PIN, LOW);
   long duracao = pulseIn(ECHO_PIN, HIGH);
   return (duracao * 0.034) / 2.0;
+}
+
+// Callback para mensagens recebidas
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Mensagem recebida: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
 }
