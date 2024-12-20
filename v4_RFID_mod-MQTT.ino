@@ -21,7 +21,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 // Configuração do módulo PN532
 #define SDA_PIN 21 // Pino SDA (SS) do módulo PN532
 #define SCL_PIN 22 // Pino SCL do módulo PN532
-Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
+  Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
 
 // Configurações da rede Wi-Fi
 const char* ssid = "Starlink_CIT";
@@ -60,24 +60,26 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println();
 }
 
+bool nfcFuncionando = false; // Variável para indicar se o módulo NFC está funcional
+
 void setup() {
   Serial.begin(115200);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(LED_PIN, OUTPUT); // Configura o LED como saída
 
-   // Inicializa o PN532
+  // Inicializa o PN532
   Serial.println("Inicializando o módulo PN532...");
   nfc.begin();
   uint32_t versiondata = nfc.getFirmwareVersion();
   if (!versiondata) {
-    Serial.println("Não foi possível encontrar o módulo PN532.");
-    while (1); // Trava o programa
+    Serial.println("Aviso: Não foi possível encontrar o módulo PN532. Continuando sem o módulo NFC.");
+    nfcFuncionando = false; // Marca o NFC como não funcional
+  } else {
+    nfcFuncionando = true; // Marca o NFC como funcional
+    nfc.SAMConfig(); // Configura o módulo para leitura de cartões
+    Serial.println("Módulo PN532 inicializado com sucesso!");
   }
-
-  // Configura o módulo para leitura de cartões
-  nfc.SAMConfig();
-  Serial.println("Módulo PN532 inicializado com sucesso!");
 
   // Conecta à rede Wi-Fi
   setup_wifi();
