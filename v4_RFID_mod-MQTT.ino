@@ -40,7 +40,7 @@ PubSubClient client(espClient);
 
 // Variáveis auxiliares
 unsigned long lastMsg = 0;
-const int intervalo = 5000;
+const int intervalo = 1000; // Envio de dados a cada 1 segundo
 const float distancia_limite = 10.0; // Distância limite em cm para a porta
 unsigned long portaAbertaDesde = 0;  // Momento em que a porta foi detectada aberta
 bool ledEstado = false;              // Estado atual do LED
@@ -51,16 +51,25 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -10800; // Fuso horário (GMT-3 para o Brasil)
 const int daylightOffset_sec = 3600; // Ajuste para horário de verão
 
+// Temporizadores adicionais
+unsigned long ultimaLeituraDHT = 0;
+const int intervaloDHT = 3000; // Atualizar o DHT11 a cada 3 segundos
+
+unsigned long ultimaLeituraRFID = 0;
+const int intervaloRFID = 1000; // Verificar RFID a cada 1 segundo
+
+unsigned long ultimaMudancaLED = 0;
+const int intervaloPiscaLED = 500; // Intervalo para piscar o LED em milissegundos
+
+bool nfcFuncionando = false; // Variável para indicar se o módulo NFC está funcional
+
 void callback(char* topic, byte* payload, unsigned int length) {
-  // Aqui você implementa a lógica para processar as mensagens recebidas
   Serial.print("Mensagem recebida: ");
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
 }
-
-bool nfcFuncionando = false; // Variável para indicar se o módulo NFC está funcional
 
 void setup() {
   Serial.begin(115200);
@@ -88,7 +97,7 @@ void setup() {
   espClient.setInsecure(); // Permite conexões TLS sem validar certificados
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback); // Adiciona callback para mensagens recebidas
-  
+
   dht.begin();
 
   // Configura o servidor NTP
@@ -105,8 +114,6 @@ void loop() {
   unsigned long now = millis();
   if (now - lastMsg > intervalo) {
     lastMsg = now;
-
-    // Envia dados do sensor
     enviarDados();
   }
 
@@ -160,33 +167,35 @@ void reconnect() {
 
 // Função para enviar dados de temperatura, umidade, estado da porta e usuário
 void enviarDados() {
-  // Leitura do DHT11
-  float temperatura = dht.readTemperature();
-  float umidade = dht.readHumidity();
+  float temperatura = NAN, umidade = NAN;
 
-  // Verifica leituras válidas
-  if (isnan(temperatura) || isnan(umidade)) {
-    Serial.println("Erro ao ler o sensor DHT11.");
-    return;
+  // Leitura condicional do DHT11
+  if (millis() - ultimaLeituraDHT > intervaloDHT) {
+    ultimaLeituraDHT = millis();
+    temperatura = dht.readTemperature();
+    umidade = dht.readHumidity();
+
+    if (isnan(temperatura) || isnan(umidade)) {
+      Serial.println("Erro ao ler o sensor DHT11.");
+      return;
+    }
   }
 
-  // Verifica o estado da porta
+  // Leitura do HC-SR04
   float distancia = medirDistancia();
   String estado_porta = (distancia <= distancia_limite) ? "Fechada" : "Aberta";
 
-  if (estado_porta == "Aberta") {
-    if (portaAbertaDesde == 0) {
-      portaAbertaDesde = millis();
-    }
-  } else {
+  if (estado_porta == "Aberta" && portaAbertaDesde == 0) {
+    portaAbertaDesde = millis();
+  } else if (estado_porta == "Fechada") {
     portaAbertaDesde = 0;
-    digitalWrite(LED_PIN, LOW); // Desliga o LED quando a porta é fechada
+    digitalWrite(LED_PIN, LOW);
   }
 
-  // Obtém o timestamp
+  // Obter timestamp
   String timestamp = getTimestamp();
 
-  // Monta a mensagem JSON
+  // Montar mensagem JSON
   String mensagem = "{";
   mensagem += "\"horario:\": \"" + timestamp + "\", ";
   mensagem += "\"temperatura\": " + String(temperatura) + ", ";
@@ -194,7 +203,7 @@ void enviarDados() {
   mensagem += "\"estado_porta\": \"" + estado_porta + "\", ";
   mensagem += "\"usuario\": \"" + usuarioAtual + "\"}";
 
-  // Envia ao HiveMQ
+  // Publicar mensagem
   if (client.publish(mqtt_topic, mensagem.c_str())) {
     Serial.println("Dados enviados: " + mensagem);
   } else {
@@ -205,39 +214,34 @@ void enviarDados() {
 // Função para gerenciar o estado do LED
 void gerenciarLED() {
   if (portaAbertaDesde > 0 && millis() - portaAbertaDesde > 10000) {
-    // Pisca o LED se a porta estiver aberta por mais de 10 segundos
-    ledEstado = !ledEstado;
-    digitalWrite(LED_PIN, ledEstado ? HIGH : LOW);
-    delay(500); // Tempo de piscada
+    if (millis() - ultimaMudancaLED > intervaloPiscaLED) {
+      ultimaMudancaLED = millis();
+      ledEstado = !ledEstado;
+      digitalWrite(LED_PIN, ledEstado ? HIGH : LOW);
+    }
   }
 }
 
 // Função para verificar o RFID
 void verificarRFID() {
-  if (!nfcFuncionando) {
-    // NFC não está funcionando, pula a verificação
+  if (!nfcFuncionando || millis() - ultimaLeituraRFID < intervaloRFID) {
     return;
   }
+  ultimaLeituraRFID = millis();
 
   uint8_t success;
-  uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // UID do cartão (máx. 7 bytes)
+  uint8_t uid[7] = {0}; // UID do cartão
   uint8_t uidLength;
 
-  // Tenta ler o cartão
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-
   if (success) {
-    Serial.print("Cartão detectado. UID: ");
     String id = "";
     for (uint8_t i = 0; i < uidLength; i++) {
       id += String(uid[i], HEX);
     }
-    Serial.println(id);
-
-    // Atualiza o usuário atual
     usuarioAtual = id;
+    Serial.println("Cartão detectado. UID: " + id);
   } else {
-    // Nenhum cartão foi detectado
     usuarioAtual = "desconhecido";
   }
 }
