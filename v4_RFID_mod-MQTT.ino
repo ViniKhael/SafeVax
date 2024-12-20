@@ -21,7 +21,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 // Configuração do módulo PN532
 #define SDA_PIN 21 // Pino SDA (SS) do módulo PN532
 #define SCL_PIN 22 // Pino SCL do módulo PN532
-  Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
+Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
 
 // Configurações da rede Wi-Fi
 const char* ssid = "Starlink_CIT";
@@ -214,6 +214,11 @@ void gerenciarLED() {
 
 // Função para verificar o RFID
 void verificarRFID() {
+  if (!nfcFuncionando) {
+    // NFC não está funcionando, pula a verificação
+    return;
+  }
+
   uint8_t success;
   uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // UID do cartão (máx. 7 bytes)
   uint8_t uidLength;
