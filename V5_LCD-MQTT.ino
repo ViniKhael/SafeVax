@@ -83,6 +83,42 @@ void setup() {
 
   dht.begin();
 }
+void verificarRFID() {
+  // Verifica se há um cartão presente de forma não bloqueante
+  uint8_t success = nfc.inListPassiveTarget();
+  if (success > 0) { // Há um cartão detectado
+    uint8_t uid[7];
+    uint8_t uidLength;
+    String novoUsuario = "";
+
+    // Tenta ler o UID do cartão
+    if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) {
+      for (uint8_t i = 0; i < uidLength; i++) {
+        novoUsuario += String(uid[i], HEX);
+      }
+
+      // Atualiza o usuário se for diferente do atual
+      if (novoUsuario != usuarioAtual) {
+        Serial.println("Novo usuário identificado: " + novoUsuario);
+        usuarioAtual = novoUsuario;
+      }
+    } else {
+      // Caso a leitura do UID falhe
+      Serial.println("Falha na leitura do UID do cartão.");
+    }
+  } else {
+    // Caso nenhum cartão seja detectado
+    Serial.println("Nenhum cartão detectado.");
+  }
+
+  // Exibe o estado atual do usuário
+  Serial.println("Usuário atual: " + usuarioAtual);
+}
+
+
+
+
+
 
 void loop() {
   if (!client.connected()) {
@@ -92,7 +128,6 @@ void loop() {
 
   // Atualiza continuamente o estado do RFID
   verificarRFID();
-  escreveTela();
 
   // Envia os dados MQTT a cada 1 segundo
   unsigned long now = millis();
@@ -100,6 +135,7 @@ void loop() {
     lastMsg = now;
     enviarDados(); // Envia os dados com o estado mais recente
   }
+  // escreveTela();
  // Atualiza o estado do LED
   gerenciarLED();
 }
@@ -158,27 +194,6 @@ void enviarDados() {
     Serial.println("Dados enviados: " + mensagem);
   } else {
     Serial.println("Falha no envio.");
-  }
-}
-
-// Função que verifica o cartão RFID de forma não bloqueante
-void verificarRFID() {
-  uint8_t success = nfc.inListPassiveTarget();
-
-  if (success > 0) {
-    uint8_t uid[7];
-    uint8_t uidLength;
-    if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) {
-      String novoUsuario = "";
-      for (uint8_t i = 0; i < uidLength; i++) {
-        novoUsuario += String(uid[i], HEX);
-      }
-
-      if (novoUsuario != usuarioAtual) {
-        usuarioAtual = novoUsuario; // Atualiza o usuário apenas se for diferente
-        Serial.println("Novo usuário identificado: " + usuarioAtual);
-      }
-    }
   }
 }
 
