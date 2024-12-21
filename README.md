@@ -9,14 +9,12 @@ SafeVax é um sistema automatizado projetado para monitorar a abertura e fechame
 ## Ferramentas Utilizadas
 - **ESP32**: Microcontrolador para integração e controle dos sensores.
 - **Sensor DHT11**: Para monitorar a temperatura interna em tempo real.
-- **Sensor de RFID**: Para identificação de quem acessa o refrigerador.
+- **Leitura de RFID**: Registro de quem acessou o refrigerador, garantindo rastreabilidade e responsabilidade. 
 - **Sensor para detecção de abertura e fechamento de portas**: Para monitorar acessos ao refrigerador.
-- **Software de monitoramento**: Para exibição e registro dos dados capturados.
-- **Envio de alertas via WhatsApp**: Notificações automáticas para gerentes do hospital em casos de irregularidades.
 
 ## Implementações Futuras
-- **Leitura de RFID**: Registro de quem acessou o refrigerador, garantindo rastreabilidade e responsabilidade. 
 - **Integração com sistemas hospitalares**: Sincronização de dados com plataformas de gestão de saúde.
 - **Relatórios automáticos**: Análise de dados históricos para otimizar práticas de armazenamento e logística.
+- **Envio de alertas via WhatsApp**: Notificações automáticas para gerentes do hospital em casos de irregularidades.
 
 SafeVax é um passo em direção a um armazenamento de vacinas mais seguro e confiável, reduzindo riscos e aumentando a eficiência no gerenciamento hospitalar.
